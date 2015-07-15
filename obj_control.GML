@@ -1,0 +1,167 @@
+///build level
+
+//init variables
+//cycle modes/UI
+press_count = 2;
+cycle_cur_mode = "";
+
+//ui
+progress_bar_vis = false;
+unlocking = false;
+disarming = false;
+minimap_vis = false;
+
+//main timer
+min_units = 3;
+sec_tens = 0;
+sec_units = 0;
+step_second_counter = 0;
+
+//interaction timers
+chest_unlock_time = 150;
+trap_disarm_time = 90;
+chest_unlock_time_remaining = chest_unlock_time;
+trap_disarm_time_remaining = trap_disarm_time;
+
+//loot
+chests_looted = 0;
+
+//generation
+depth = 9;
+num_zones = 3;
+generated = false;
+
+for(var z = 0; z < num_zones; z ++){
+    zone[z] = instance_create(x, y, obj_zone);
+    
+    with(zone[z]){
+
+        tile_width = 80;
+        tile_height = 80;
+        width = 2880;
+        height = 1920;
+        width_cells = width/tile_width;
+        height_cells = height/tile_height;
+        
+        grid = mp_grid_create(width * z, 0, width_cells, height_cells, tile_width, tile_height);
+        //mp_grid_add_rectangle(grid, width * z, 0, width * (z + 1), height);
+        rooms = ds_list_create();
+        cast_count = 0;
+        
+        //tile 'left' values
+        tile_dark_left = 0;
+        tile_floor_left = 80;
+        tile_trap_left = 160;
+        tile_wall_left = 240;
+        tile_entrance_left = 320;
+        tile_exit_left = 400;
+        tile_chest_left = 480;
+        
+        //tile subsets
+        tile_dark_subimg = 0;
+        tile_floor_subimg = 2;
+        tile_trap_subimg = 2;
+        tile_wall_subimg = 3;
+        tile_entrance_subimg = 0;
+        tile_exit_subimg = 0;
+        tile_chest_subimg = 1;
+    }
+
+    //add background tiles
+    for(var i = 0; i < zone[z].height_cells; i ++){
+        for(var j = 0; j < zone[z].width_cells; j ++){
+            tile_add(bg_tileset_basic, 0, 0, zone[z].tile_width, zone[z].tile_height, (zone[z].width * z) + (zone[z].tile_width * j), zone[z].tile_height * i, 10);
+        }
+    }
+
+    //generates random rooms
+    for(var i = 0; i < 50; i ++){
+    
+        //stores room values in obj_room
+        var r = instance_create(x, y, obj_room);
+        r.width = irandom_range(4, 6);
+        r.height = irandom_range(4, 6);
+        r.left = irandom_range(0, (zone[z].width_cells - r.width) - 1);
+        r.top = irandom_range(0, (zone[z].height_cells - r.height) - 1);
+        r.right = r.left + r.width - 1;
+        r.bottom = r.top + r.height - 1;
+        r.center_x = floor(r.left + r.width/2);
+        r.center_y = floor(r.top + r.height/2);
+        test_overlap = scr_check_overlap(r, zone[z]);
+    
+        //if the room does not overlap with any other rooms
+        if(!test_overlap){
+            //list/create it
+            ds_list_add(zone[z].rooms, r);
+            scr_create_room(r, zone[z], z);
+        }
+        else{
+            //discard
+            with(r){instance_destroy();}
+        }
+    }
+
+    //loops through each room:
+    //stores its distance to the next room in the list
+    //compares that against its distance to other rooms, finding the closest one.
+    for(var i = 0; i < ds_list_size(zone[z].rooms) - 1; i ++){
+        for(var j = i + 1; j < ds_list_size(zone[z].rooms); j ++){
+            var dist = point_distance(zone[z].rooms[| i].center_x, zone[z].rooms[| i].center_y, zone[z].rooms[| j].center_x, zone[z].rooms[| j].center_y);
+            
+            var connect = true;
+            for(var k = 0; k < ds_list_size(zone[z].rooms); k ++){
+                if(k == i || k == j){
+                    continue;
+                }
+                if(point_distance(zone[z].rooms[| i].center_x, zone[z].rooms[| i].center_y, zone[z].rooms[| k].center_x, zone[z].rooms[| k].center_y) < dist && 
+                   point_distance(zone[z].rooms[| j].center_x, zone[z].rooms[| j].center_y, zone[z].rooms[| k].center_x, zone[z].rooms[| k].center_y) < dist){
+                    connect = false;
+                    break;
+                }
+            }
+            
+            if(!connect){
+                continue;
+            }
+            
+            //connects closest rooms
+            scr_create_corridor(zone[z].rooms[| i], zone[z].rooms[| j], zone[z], z);
+        }
+    }
+
+    //fill in wall tiles
+    for(var i = 0; i < zone[z].height_cells; i ++){
+        for(var j = 0; j < zone[z].width_cells; j ++){
+            var tt = tile_layer_find(10, (zone[z].width * z) + (j * zone[z].tile_width), i * zone[z].tile_height);
+            var tt_l = tile_get_left(tt);
+            var tt_x = tile_get_x(tt);
+            var tt_y = tile_get_y(tt);
+            var tt_rt = irandom_range(0, zone[z].tile_wall_subimg);
+            if(tt_l == 0 && scr_check_adjacent(tt_x, tt_y, zone[z].tile_floor_left, zone[z], z, true)){
+                tile_set_region(tt, zone[z].tile_wall_left, zone[z].tile_height * tt_rt, zone[z].tile_width, zone[z].tile_height);
+                mp_grid_add_cell(zone[z].grid, (tt_x div 80) mod 36, (tt_y div 80) mod 24);
+            }
+        }
+    }
+    
+    //spawn shadow casters if next to floor tiles.
+    for(var i = 0; i < zone[z].height_cells; i ++){
+        for(var j = 0; j < zone[z].width_cells; j ++){
+            var xx, yy, tt;
+            xx = (zone[z].width * z) + (zone[z].tile_width * j);
+            yy = zone[z].tile_height * i;
+            tt = tile_layer_find(10, xx, yy);
+            if(tile_get_left(tt) == zone[z].tile_wall_left && scr_check_adjacent(xx, yy, zone[z].tile_floor_left, zone[z], z, true)){
+                zone[z].cast_x[zone[z].cast_count] = xx;
+                zone[z].cast_y[zone[z].cast_count] = yy;
+                zone[z].cast_count ++;
+            }
+        }
+    }
+
+    //entrances/exits/chests (traps/npcs later)
+    scr_map_features_init(zone[z], z); 
+}
+
+//initialise lighting
+scr_lightmap_init(view_wview[1], view_hview[1], 0.3);
